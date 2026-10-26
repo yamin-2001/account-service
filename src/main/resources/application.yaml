@@ -1,0 +1,32 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: account-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/account_db
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka
+  instance:
+    prefer-ip-address: true
+
+app:
+  cbs:
+    # Eureka service name, resolved by the load balancer.
+    base-url: http://core-banking-service
+  account:
+    max-per-user: 5
+    default-currency: USD
+    # DEV ONLY: every new account starts with this balance so transfers can be tested.
+    # Set ACCOUNT_DEMO_BALANCE=0 (or remove this) for anything real.
+    demo-opening-balance: ${ACCOUNT_DEMO_BALANCE:1000.00}

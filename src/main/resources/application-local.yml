@@ -1,0 +1,12 @@
+eureka:
+  client:
+    enabled: false
+
+spring:
+  cloud:
+    discovery:
+      client:
+        simple:
+          instances:
+            core-banking-service:
+              - uri: http://localhost:8084
