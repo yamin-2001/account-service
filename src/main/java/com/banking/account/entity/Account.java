@@ -28,6 +28,9 @@ public class Account {
     @Column(nullable = false, length = 20)
     private AccountStatus status;
 
+    @Column(length = 255)
+    private String failureReason;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -50,6 +53,9 @@ public class Account {
 
     public AccountStatus getStatus() { return status; }
     public void setStatus(AccountStatus status) { this.status = status; }
+
+    public String getFailureReason() { return failureReason; }
+    public void setFailureReason(String failureReason) { this.failureReason = failureReason; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
 }

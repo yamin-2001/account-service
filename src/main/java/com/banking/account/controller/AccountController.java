@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -30,9 +31,16 @@ public class AccountController {
         return ResponseEntity.ok(accountService.listForUser(userId));
     }
 
+    @GetMapping("/{accountNumber}")
+    public ResponseEntity<AccountResponse> get(@RequestHeader("X-User-Id") Long userId,
+                                               @PathVariable String accountNumber) {
+        return ResponseEntity.ok(accountService.getOne(userId, accountNumber));
+    }
+
+    /** 202 Accepted: the account is created, but CBS opens its ledger account asynchronously. */
     @PostMapping
     public ResponseEntity<AccountResponse> create(@RequestHeader("X-User-Id") Long userId,
                                                   @Valid @RequestBody CreateAccountRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(accountService.create(userId, request));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(accountService.create(userId, request));
     }
 }

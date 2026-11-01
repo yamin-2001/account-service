@@ -2,11 +2,28 @@ server:
   port: 8081
 
 spring:
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: account-service
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+    listener:
+      ack-mode: record
+      concurrency: 3
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+        linger.ms: 0
+        max.block.ms: 5000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
   application:
     name: account-service
   datasource:
-    url: jdbc:postgresql://localhost:5432/account_db
-    username: ${DB_USERNAME:postgres}
+    url: jdbc:postgresql://localhost:5433/account_db
+    username: ${DB_USERNAME:banking_admin}
     password: ${DB_PASSWORD:postgres}
   jpa:
     hibernate:
@@ -27,6 +44,18 @@ app:
   account:
     max-per-user: 5
     default-currency: USD
+    pending-timeout-minutes: 10
     # DEV ONLY: every new account starts with this balance so transfers can be tested.
     # Set ACCOUNT_DEMO_BALANCE=0 (or remove this) for anything real.
     demo-opening-balance: ${ACCOUNT_DEMO_BALANCE:0.00}
+  messaging:
+    producer-name: account-service
+    relay-interval-ms: 1000
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}

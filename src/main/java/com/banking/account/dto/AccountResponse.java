@@ -6,5 +6,7 @@ public record AccountResponse(
         String accountNumber,
         String accountType,
         BigDecimal balance,
-        String currency
+        String currency,
+        String status,
+        String reason
 ) {}

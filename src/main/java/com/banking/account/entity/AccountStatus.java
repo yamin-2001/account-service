@@ -1,6 +1,8 @@
 package com.banking.account.entity;
 
 public enum AccountStatus {
+    PENDING,
     ACTIVE,
-    BLOCKED
+    BLOCKED,
+    OPENING_FAILED
 }

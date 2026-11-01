@@ -11,8 +11,10 @@ import com.banking.account.entity.AccountStatus;
 import com.banking.account.exception.AccountCreationFailedException;
 import com.banking.account.exception.AccountNotFoundException;
 import com.banking.account.exception.CbsUnavailableException;
-import com.banking.account.exception.LedgerAccountConflictException;
 import com.banking.account.exception.MaxAccountsReachedException;
+import com.banking.account.messaging.EventPublisher;
+import com.banking.account.messaging.TopicNames;
+import com.banking.account.messaging.payload.CreateLedgerAccountPayload;
 import com.banking.account.repository.AccountRepository;
 import com.banking.account.service.AccountService;
 import com.banking.account.util.AccountNumberGenerator;
@@ -30,32 +32,38 @@ public class AccountServiceImpl implements AccountService {
 
     private static final Logger log = LoggerFactory.getLogger(AccountServiceImpl.class);
     private static final int MAX_NUMBER_ATTEMPTS = 5;
+    private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2);
 
     private final AccountRepository accountRepository;
     private final CbsClient cbsClient;
     private final AccountNumberGenerator numberGenerator;
     private final AccountProperties properties;
+    private final EventPublisher events;
 
     public AccountServiceImpl(AccountRepository accountRepository,
                               CbsClient cbsClient,
                               AccountNumberGenerator numberGenerator,
-                              AccountProperties properties) {
+                              AccountProperties properties,
+                              EventPublisher events) {
         this.accountRepository = accountRepository;
         this.cbsClient = cbsClient;
         this.numberGenerator = numberGenerator;
         this.properties = properties;
+        this.events = events;
     }
 
     @Override
+    @Transactional
     public AccountResponse create(Long userId, CreateAccountRequest request) {
-        if (accountRepository.countByUserId(userId) >= properties.maxPerUser()) {
+        if (accountRepository.countByUserIdAndStatusNot(userId, AccountStatus.OPENING_FAILED)
+                >= properties.maxPerUser()) {
             throw new MaxAccountsReachedException(
                     "You can have at most " + properties.maxPerUser() + " accounts");
         }
 
         String currency = properties.defaultCurrency();
         BigDecimal opening = properties.demoOpeningBalance() == null
-                ? BigDecimal.ZERO.setScale(2)
+                ? ZERO
                 : properties.demoOpeningBalance().setScale(2);
 
         for (int attempt = 0; attempt < MAX_NUMBER_ATTEMPTS; attempt++) {
@@ -64,22 +72,20 @@ public class AccountServiceImpl implements AccountService {
                 continue;
             }
 
-            // CBS first. If this fails, nothing is saved here, so there is no account without a ledger.
-            try {
-                cbsClient.createLedgerAccount(number, currency, opening);
-            } catch (LedgerAccountConflictException ex) {
-                continue;
-            }
-
             Account account = new Account();
             account.setAccountNumber(number);
             account.setUserId(userId);
             account.setAccountType(request.accountType());
             account.setCurrency(currency);
-            account.setStatus(AccountStatus.ACTIVE);
+            account.setStatus(AccountStatus.PENDING);
             accountRepository.save(account);
 
-            return new AccountResponse(number, request.accountType().name(), opening, currency);
+            // Saved in the same transaction. CBS creates the ledger account and answers with an event.
+            events.publish(TopicNames.CBS_COMMANDS, number, "CreateLedgerAccount", number, null,
+                    new CreateLedgerAccountPayload(number, currency, opening));
+
+            return new AccountResponse(number, request.accountType().name(), ZERO, currency,
+                    AccountStatus.PENDING.name(), null);
         }
 
         throw new AccountCreationFailedException("Could not create the account, please try again");
@@ -87,26 +93,34 @@ public class AccountServiceImpl implements AccountService {
 
     @Override
     public List<AccountResponse> listForUser(Long userId) {
-        List<Account> accounts = accountRepository.findByUserIdOrderByCreatedAtAsc(userId);
+        List<Account> accounts = accountRepository
+                .findByUserIdAndStatusNotOrderByCreatedAtAsc(userId, AccountStatus.OPENING_FAILED);
         if (accounts.isEmpty()) {
             return List.of();
         }
 
-        Map<String, CbsBalance> balances = cbsClient.getBalances(
-                accounts.stream().map(Account::getAccountNumber).toList());
+        // Only accounts that already exist in the ledger have a balance there.
+        List<String> ledgerNumbers = accounts.stream()
+                .filter(account -> account.getStatus() != AccountStatus.PENDING)
+                .map(Account::getAccountNumber)
+                .toList();
+        Map<String, CbsBalance> balances = cbsClient.getBalances(ledgerNumbers);
 
-        return accounts.stream().map(account -> {
-            CbsBalance balance = balances.get(account.getAccountNumber());
-            if (balance == null) {
-                log.error("No ledger balance for account {}", account.getAccountNumber());
-                throw new CbsUnavailableException("Balance temporarily unavailable, please try again");
-            }
-            return new AccountResponse(
-                    account.getAccountNumber(),
-                    account.getAccountType().name(),
-                    balance.balance(),
-                    account.getCurrency());
-        }).toList();
+        return accounts.stream().map(account -> toResponse(account, balances)).toList();
+    }
+
+    @Override
+    public AccountResponse getOne(Long userId, String accountNumber) {
+        Account account = accountRepository.findByAccountNumberAndUserId(accountNumber.trim(), userId)
+                .orElseThrow(() -> new AccountNotFoundException("Account not found: " + accountNumber));
+
+        boolean hasLedger = account.getStatus() == AccountStatus.ACTIVE
+                || account.getStatus() == AccountStatus.BLOCKED;
+        Map<String, CbsBalance> balances = hasLedger
+                ? cbsClient.getBalances(List.of(account.getAccountNumber()))
+                : Map.of();
+
+        return toResponse(account, balances);
     }
 
     @Override
@@ -127,6 +141,25 @@ public class AccountServiceImpl implements AccountService {
         return accountRepository.findByAccountNumberIn(cleaned).stream()
                 .map(this::toDetails)
                 .toList();
+    }
+
+    private AccountResponse toResponse(Account account, Map<String, CbsBalance> balances) {
+        BigDecimal balance = ZERO;
+        if (account.getStatus() == AccountStatus.ACTIVE || account.getStatus() == AccountStatus.BLOCKED) {
+            CbsBalance ledger = balances.get(account.getAccountNumber());
+            if (ledger == null) {
+                log.error("No ledger balance for account {}", account.getAccountNumber());
+                throw new CbsUnavailableException("Balance temporarily unavailable, please try again");
+            }
+            balance = ledger.balance();
+        }
+        return new AccountResponse(
+                account.getAccountNumber(),
+                account.getAccountType().name(),
+                balance,
+                account.getCurrency(),
+                account.getStatus().name(),
+                account.getFailureReason());
     }
 
     private AccountDetailsResponse toDetails(Account account) {

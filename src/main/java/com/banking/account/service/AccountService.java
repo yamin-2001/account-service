@@ -12,6 +12,8 @@ public interface AccountService {
 
     List<AccountResponse> listForUser(Long userId);
 
+    AccountResponse getOne(Long userId, String accountNumber);
+
     AccountDetailsResponse getDetails(String accountNumber);
 
     List<AccountDetailsResponse> getDetails(List<String> accountNumbers);
