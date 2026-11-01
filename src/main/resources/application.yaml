@@ -52,10 +52,13 @@ app:
     producer-name: account-service
     relay-interval-ms: 1000
 management:
+  server:
+    port: 18081
   endpoints:
     web:
       exposure:
         include: health,info,prometheus
   metrics:
-    tags:
-      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
