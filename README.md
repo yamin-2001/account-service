@@ -779,6 +779,24 @@ curl -i http://localhost:8080/api/accounts/ACC-12345678 \
   -H "Authorization: Bearer $TOKEN"
 ```
 
+# Account Service
+
+**Part of the Banking Microservices Project**
+
+Developed and maintained by **Jahid Hasan**
+
+- **GitHub:** [Md-Jahid-Hasan-10](https://github.com/Md-Jahid-Hasan-10)
+- **Repository:** [account-service](https://github.com/Md-Jahid-Hasan-10/account-service)
+- **Project:** Banking Microservices
+- **Service Port:** `8081`
+- **Actuator/Metrics Port:** `18081`
+
+---
+
+The `account-service` is responsible for managing customer bank accounts within the Banking Microservices platform. It handles account creation, account ownership, account validation, account lifecycle management, and communication with the Core Banking System through Kafka-based event-driven architecture.
+
+
+
 Call the service directly (bypassing the gateway), supplying the header by hand:
 
 ```bash
