@@ -779,17 +779,6 @@ curl -i http://localhost:8080/api/accounts/ACC-12345678 \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-# Account Service
-
-**Part of the Banking Microservices Project**
-
-Developed and maintained by **Jahid Hasan**
-
-- **GitHub:** [Md-Jahid-Hasan-10](https://github.com/Md-Jahid-Hasan-10)
-- **Repository:** [account-service](https://github.com/Md-Jahid-Hasan-10/account-service)
-- **Project:** Banking Microservices
-- **Service Port:** `8081`
-- **Actuator/Metrics Port:** `18081`
 
 ---
 
@@ -870,3 +859,15 @@ curl -i 'http://localhost:8081/internal/accounts?accountNumbers=ACC-12345678,ACC
 - **The `accounts` table has only one index** (`idx_accounts_user` on `user_id`) besides the primary key.
 - **A late CBS answer still activates an account.** `OPENING_FAILED` is deliberately included in the "can still become `ACTIVE`" set, so a ledger account never stays without an owner — but the failure reason is cleared at that point.
 - **`account-service` is a separate Git repository** (remote `https://github.com/yamin-2001/account-service.git`, branch `main`).
+
+# Account Service
+
+**Part of the Banking Microservices Project**
+
+Developed and maintained by **Jahid Hasan**
+
+- **GitHub:** [Md-Jahid-Hasan-10](https://github.com/Md-Jahid-Hasan-10)
+- **Repository:** [account-service](https://github.com/Md-Jahid-Hasan-10/account-service)
+- **Project:** Banking Microservices
+- **Service Port:** `8081`
+- **Actuator/Metrics Port:** `18081`
