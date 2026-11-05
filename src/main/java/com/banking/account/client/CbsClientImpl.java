@@ -1,8 +1,7 @@
 package com.banking.account.client;
 
-import com.banking.account.exception.CbsUnavailableException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.banking.account.resilience.DownstreamErrors;
+import com.banking.account.resilience.ResilientCaller;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
@@ -18,12 +17,14 @@ import java.util.stream.Collectors;
 @Component
 public class CbsClientImpl implements CbsClient {
 
-    private static final Logger log = LoggerFactory.getLogger(CbsClientImpl.class);
+    private static final String TARGET = "cbs";
 
     private final RestClient restClient;
+    private final ResilientCaller resilient;
 
-    public CbsClientImpl(@Qualifier("cbsRestClient") RestClient restClient) {
+    public CbsClientImpl(@Qualifier("cbsRestClient") RestClient restClient, ResilientCaller resilient) {
         this.restClient = restClient;
+        this.resilient = resilient;
     }
 
     @Override
@@ -31,7 +32,11 @@ public class CbsClientImpl implements CbsClient {
         if (accountNumbers.isEmpty()) {
             return Map.of();
         }
+        // A read, so it is safe to try again.
+        return resilient.callWithRetry(TARGET, "getBalances", () -> fetch(accountNumbers));
+    }
 
+    private Map<String, CbsBalance> fetch(Collection<String> accountNumbers) {
         try {
             List<CbsBalance> balances = restClient.get()
                     .uri(uriBuilder -> uriBuilder
@@ -42,13 +47,12 @@ public class CbsClientImpl implements CbsClient {
                     .body(new ParameterizedTypeReference<List<CbsBalance>>() {});
 
             if (balances == null) {
-                return Map.of();
+                throw DownstreamErrors.badResponse(TARGET, "getBalances", null);
             }
             return balances.stream()
-                    .collect(Collectors.toMap(CbsBalance::accountNumber, Function.identity()));
+                    .collect(Collectors.toMap(CbsBalance::accountNumber, Function.identity(), (first, second) -> first));
         } catch (RestClientException | IllegalStateException ex) {
-            log.error("CBS balance lookup failed: {}", ex.getMessage());
-            throw new CbsUnavailableException("Balances are temporarily unavailable, please try again");
+            throw DownstreamErrors.translate(TARGET, "getBalances", ex);
         }
     }
 }

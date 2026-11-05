@@ -8,5 +8,6 @@ public record AccountResponse(
         BigDecimal balance,
         String currency,
         String status,
-        String reason
+        String reason,
+        boolean balanceAvailable
 ) {}

@@ -20,6 +20,8 @@ import java.util.List;
 @RequestMapping("/api/accounts")
 public class AccountController {
 
+    private static final String DEGRADED_HEADER = "X-Degraded";
+
     private final AccountService accountService;
 
     public AccountController(AccountService accountService) {
@@ -28,13 +30,23 @@ public class AccountController {
 
     @GetMapping
     public ResponseEntity<List<AccountResponse>> list(@RequestHeader("X-User-Id") Long userId) {
-        return ResponseEntity.ok(accountService.listForUser(userId));
+        List<AccountResponse> accounts = accountService.listForUser(userId);
+        ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+        if (accounts.stream().anyMatch(account -> !account.balanceAvailable())) {
+            response.header(DEGRADED_HEADER, "balances");
+        }
+        return response.body(accounts);
     }
 
     @GetMapping("/{accountNumber}")
     public ResponseEntity<AccountResponse> get(@RequestHeader("X-User-Id") Long userId,
                                                @PathVariable String accountNumber) {
-        return ResponseEntity.ok(accountService.getOne(userId, accountNumber));
+        AccountResponse account = accountService.getOne(userId, accountNumber);
+        ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+        if (!account.balanceAvailable()) {
+            response.header(DEGRADED_HEADER, "balances");
+        }
+        return response.body(account);
     }
 
     /** 202 Accepted: the account is created, but CBS opens its ledger account asynchronously. */

@@ -10,7 +10,7 @@ import com.banking.account.entity.Account;
 import com.banking.account.entity.AccountStatus;
 import com.banking.account.exception.AccountCreationFailedException;
 import com.banking.account.exception.AccountNotFoundException;
-import com.banking.account.exception.CbsUnavailableException;
+import com.banking.account.exception.DownstreamException;
 import com.banking.account.exception.MaxAccountsReachedException;
 import com.banking.account.messaging.EventPublisher;
 import com.banking.account.messaging.TopicNames;
@@ -18,6 +18,7 @@ import com.banking.account.messaging.payload.CreateLedgerAccountPayload;
 import com.banking.account.repository.AccountRepository;
 import com.banking.account.service.AccountService;
 import com.banking.account.util.AccountNumberGenerator;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -39,17 +40,20 @@ public class AccountServiceImpl implements AccountService {
     private final AccountNumberGenerator numberGenerator;
     private final AccountProperties properties;
     private final EventPublisher events;
+    private final MeterRegistry meters;
 
     public AccountServiceImpl(AccountRepository accountRepository,
                               CbsClient cbsClient,
                               AccountNumberGenerator numberGenerator,
                               AccountProperties properties,
-                              EventPublisher events) {
+                              EventPublisher events,
+                              MeterRegistry meters) {
         this.accountRepository = accountRepository;
         this.cbsClient = cbsClient;
         this.numberGenerator = numberGenerator;
         this.properties = properties;
         this.events = events;
+        this.meters = meters;
     }
 
     @Override
@@ -85,7 +89,7 @@ public class AccountServiceImpl implements AccountService {
                     new CreateLedgerAccountPayload(number, currency, opening));
 
             return new AccountResponse(number, request.accountType().name(), ZERO, currency,
-                    AccountStatus.PENDING.name(), null);
+                    AccountStatus.PENDING.name(), null, true);
         }
 
         throw new AccountCreationFailedException("Could not create the account, please try again");
@@ -101,10 +105,10 @@ public class AccountServiceImpl implements AccountService {
 
         // Only accounts that already exist in the ledger have a balance there.
         List<String> ledgerNumbers = accounts.stream()
-                .filter(account -> account.getStatus() != AccountStatus.PENDING)
+                .filter(this::hasLedger)
                 .map(Account::getAccountNumber)
                 .toList();
-        Map<String, CbsBalance> balances = cbsClient.getBalances(ledgerNumbers);
+        Map<String, CbsBalance> balances = fetchBalances(ledgerNumbers);
 
         return accounts.stream().map(account -> toResponse(account, balances)).toList();
     }
@@ -114,10 +118,8 @@ public class AccountServiceImpl implements AccountService {
         Account account = accountRepository.findByAccountNumberAndUserId(accountNumber.trim(), userId)
                 .orElseThrow(() -> new AccountNotFoundException("Account not found: " + accountNumber));
 
-        boolean hasLedger = account.getStatus() == AccountStatus.ACTIVE
-                || account.getStatus() == AccountStatus.BLOCKED;
-        Map<String, CbsBalance> balances = hasLedger
-                ? cbsClient.getBalances(List.of(account.getAccountNumber()))
+        Map<String, CbsBalance> balances = hasLedger(account)
+                ? fetchBalances(List.of(account.getAccountNumber()))
                 : Map.of();
 
         return toResponse(account, balances);
@@ -143,15 +145,39 @@ public class AccountServiceImpl implements AccountService {
                 .toList();
     }
 
+    /**
+     * The balances are extra information. When the ledger cannot be reached the accounts are still shown,
+     * each marked "balance unavailable". Only failures of the call are handled here: a real bug still fails.
+     */
+    private Map<String, CbsBalance> fetchBalances(List<String> numbers) {
+        if (numbers.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            Map<String, CbsBalance> balances = cbsClient.getBalances(numbers);
+            if (balances.size() < numbers.size()) {
+                log.error("The ledger has no balance for {} of {} accounts", numbers.size() - balances.size(), numbers.size());
+                meters.counter("accounts.balances.degraded", "reason", "MISSING").increment();
+            }
+            return balances;
+        } catch (DownstreamException ex) {
+            log.warn("Balances are unavailable ({}), showing the accounts without them", ex.getFailure());
+            meters.counter("accounts.balances.degraded", "reason", ex.getFailure().name()).increment();
+            return Map.of();
+        }
+    }
+
+    private boolean hasLedger(Account account) {
+        return account.getStatus() == AccountStatus.ACTIVE || account.getStatus() == AccountStatus.BLOCKED;
+    }
+
     private AccountResponse toResponse(Account account, Map<String, CbsBalance> balances) {
         BigDecimal balance = ZERO;
-        if (account.getStatus() == AccountStatus.ACTIVE || account.getStatus() == AccountStatus.BLOCKED) {
+        boolean available = true;
+        if (hasLedger(account)) {
             CbsBalance ledger = balances.get(account.getAccountNumber());
-            if (ledger == null) {
-                log.error("No ledger balance for account {}", account.getAccountNumber());
-                throw new CbsUnavailableException("Balance temporarily unavailable, please try again");
-            }
-            balance = ledger.balance();
+            balance = ledger == null ? null : ledger.balance();
+            available = ledger != null;
         }
         return new AccountResponse(
                 account.getAccountNumber(),
@@ -159,7 +185,8 @@ public class AccountServiceImpl implements AccountService {
                 balance,
                 account.getCurrency(),
                 account.getStatus().name(),
-                account.getFailureReason());
+                account.getFailureReason(),
+                available);
     }
 
     private AccountDetailsResponse toDetails(Account account) {
