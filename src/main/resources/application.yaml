@@ -42,6 +42,9 @@ eureka:
     prefer-ip-address: true
 
 app:
+  observability:
+    log-bodies: true
+    max-body-length: 2048
   cbs:
     # Eureka service name, resolved by the load balancer.
     base-url: http://core-banking-service
@@ -56,6 +59,12 @@ app:
     producer-name: account-service
     relay-interval-ms: 1000
 management:
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+      tracing:
+        endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}
   server:
     port: 18081
   endpoints:
@@ -66,3 +75,58 @@ management:
     distribution:
       percentiles-histogram:
         http.server.requests: true
+        api.calls: true
+        kafka.consume: true
+        client.calls: true
+
+logging:
+  structured:
+    format:
+      file: logstash
+    json:
+      add:
+        service: ${spring.application.name}
+  file:
+    name: ${BANKING_LOG_DIR:${user.home}/banking-logs}/${spring.application.name}.json
+  logback:
+    rollingpolicy:
+      max-file-size: 20MB
+      max-history: 3
+      total-size-cap: 200MB
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 2500ms
+        slow-call-rate-threshold: 80
+        wait-duration-in-open-state: 20s
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - com.banking.account.exception.DownstreamUnavailableException
+          - com.banking.account.exception.DownstreamTimeoutException
+          - com.banking.account.exception.DownstreamBadResponseException
+        ignore-exceptions:
+          - com.banking.account.exception.DownstreamRejectedException
+    instances:
+      cbs:
+        base-config: default
+  retry:
+    configs:
+      default:
+        max-attempts: 2
+        wait-duration: 200ms
+        retry-exceptions:
+          - com.banking.account.exception.DownstreamUnavailableException
+          - com.banking.account.exception.DownstreamTimeoutException
+        ignore-exceptions:
+          - com.banking.account.exception.DownstreamRejectedException
+          - io.github.resilience4j.circuitbreaker.CallNotPermittedException
+    instances:
+      cbs-read:
+        base-config: default

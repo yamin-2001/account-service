@@ -1,5 +1,7 @@
 package com.banking.account.exception;
 
+import com.banking.account.observability.CurrentTrace;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -19,6 +21,11 @@ import java.util.stream.Collectors;
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+    private final CurrentTrace currentTrace;
+
+    public GlobalExceptionHandler(CurrentTrace currentTrace) {
+        this.currentTrace = currentTrace;
+    }
 
     @ExceptionHandler(AccountNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleNotFound(AccountNotFoundException ex) {
@@ -57,6 +64,14 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleUnreadable(HttpMessageNotReadableException ex) {
         return build(HttpStatus.BAD_REQUEST, "Malformed request body or invalid accountType (SAVINGS or CURRENT)");
     }
+    @ExceptionHandler(DownstreamException.class)
+    public ResponseEntity<ErrorResponse> handleDownstream(DownstreamException ex) {
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(ex.getStatus());
+        if (ex.getRetryAfterSeconds() != null) {
+            response.header(HttpHeaders.RETRY_AFTER, String.valueOf(ex.getRetryAfterSeconds()));
+        }
+        return response.body(body(ex.getStatus(), ex.getCode(), ex.getMessage()));
+    }
 
 
     /**
@@ -80,12 +95,21 @@ public class GlobalExceptionHandler {
     }
 
     private ResponseEntity<ErrorResponse> build(HttpStatus status, String message) {
-        ErrorResponse body = new ErrorResponse(
+        return build(status, status.name(), message);
+    }
+
+    private ResponseEntity<ErrorResponse> build(HttpStatus status, String code, String message) {
+        return ResponseEntity.status(status).body(body(status, code, message));
+    }
+
+    private ErrorResponse body(HttpStatus status, String code, String message) {
+        return new ErrorResponse(
                 LocalDateTime.now(),
                 status.value(),
                 status.getReasonPhrase(),
-                message
+                code,
+                message,
+                currentTrace.traceId()
         );
-        return ResponseEntity.status(status).body(body);
     }
 }
