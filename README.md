@@ -1,6 +1,8 @@
-# account-service
+# Account Service
 
 > The customer bank-account service of the banking platform: it owns the `accounts` table (number, owner, type, currency, lifecycle status) and opens accounts asynchronously through the core banking system. HTTP port **8081** (Actuator/metrics on **18081**).
+
+## Table of Contents
 
 - [What It Does](#what-it-does)
 - [Architecture At A Glance](#architecture-at-a-glance)
@@ -210,7 +212,7 @@ GET {app.cbs.base-url}/internal/cbs/balances?accountNumbers=ACC-1,ACC-2
 
 `app.cbs.base-url` is `http://core-banking-service`, resolved through Eureka by the load balancer. The client has a connect timeout of 3000 ms and a read timeout of 10000 ms (`config/RestClientConfig.java`). The CBS side returns `List<BalanceResponse>` where `BalanceResponse(String accountNumber, BigDecimal balance, String currency)` — the same shape as `com.banking.account.client.CbsBalance`.
 
-### Error Response Shape
+## Error Response Shape
 
 Every error is produced by `com.banking.account.exception.GlobalExceptionHandler` (`@RestControllerAdvice`) as `com.banking.account.exception.ErrorResponse`:
 
@@ -779,13 +781,6 @@ curl -i http://localhost:8080/api/accounts/ACC-12345678 \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-
----
-
-The `account-service` is responsible for managing customer bank accounts within the Banking Microservices platform. It handles account creation, account ownership, account validation, account lifecycle management, and communication with the Core Banking System through Kafka-based event-driven architecture.
-
-
-
 Call the service directly (bypassing the gateway), supplying the header by hand:
 
 ```bash
@@ -859,15 +854,3 @@ curl -i 'http://localhost:8081/internal/accounts?accountNumbers=ACC-12345678,ACC
 - **The `accounts` table has only one index** (`idx_accounts_user` on `user_id`) besides the primary key.
 - **A late CBS answer still activates an account.** `OPENING_FAILED` is deliberately included in the "can still become `ACTIVE`" set, so a ledger account never stays without an owner — but the failure reason is cleared at that point.
 - **`account-service` is a separate Git repository** (remote `https://github.com/yamin-2001/account-service.git`, branch `main`).
-
-# Account Service
-
-**Part of the Banking Microservices Project**
-
-Developed and maintained by **Jahid Hasan**
-
-- **GitHub:** [Md-Jahid-Hasan-10](https://github.com/Md-Jahid-Hasan-10)
-- **Repository:** [account-service](https://github.com/Md-Jahid-Hasan-10/account-service)
-- **Project:** Banking Microservices
-- **Service Port:** `8081`
-- **Actuator/Metrics Port:** `18081`
