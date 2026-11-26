@@ -236,7 +236,7 @@ Example — a 409 from `POST /api/accounts`:
 
 ## Database
 
-**Database name:** `account_db` — `spring.datasource.url: jdbc:postgresql://localhost:5433/account_db` (there is no environment placeholder in the YAML; override it with `SPRING_DATASOURCE_URL`). Created by `postgres/init/01-create-databases.sql` (`CREATE DATABASE account_db;`) in the PostgreSQL 16 container `banking-postgres`, published on host port **5433**. The schema is managed by Hibernate with `spring.jpa.hibernate.ddl-auto: update`.
+**Database name:** `account_db` — `spring.datasource.url: jdbc:postgresql://localhost:5433/account_db` (there is no environment placeholder in the YAML; override it with `SPRING_DATASOURCE_URL`). Created by `postgres-init/01-create-databases.sql` (`CREATE DATABASE account_db;`) in the PostgreSQL 16 container `banking-postgres`, published on host port **5433**. The schema is managed by Hibernate with `spring.jpa.hibernate.ddl-auto: update`.
 
 ### Table `accounts`
 
@@ -261,7 +261,7 @@ Enums:
 
 The database also adds the check constraints `accounts_account_type_check` (`SAVINGS`, `CURRENT`) and `accounts_status_check` (`PENDING`, `ACTIVE`, `BLOCKED`, `OPENING_FAILED`).
 
-**Schema-repair note** (`postgres/init/04-repair-schema.sql`): the `accounts_status_check` constraint is recreated to allow exactly those four values:
+**Schema note:** the `accounts_status_check` constraint must allow exactly those four values:
 
 ```sql
 ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_status_check;
@@ -270,7 +270,15 @@ ALTER TABLE accounts ADD CONSTRAINT accounts_status_check CHECK (status IN (
 ));
 ```
 
-The comment in that script explains the history: an older constraint allowed only `ACTIVE` and `BLOCKED`, so creating a `PENDING` account failed with *"new row for relation accounts violates check constraint accounts_status_check"*. The script is idempotent and is run on every start by `run-all.sh`.
+The history behind it: an older constraint allowed only `ACTIVE` and `BLOCKED`, so creating a `PENDING` account failed with *"new row for relation accounts violates check constraint accounts_status_check"*.
+
+There is **no repair script for this any more**. The table is created and kept in shape by Hibernate (`spring.jpa.hibernate.ddl-auto: update`), which reconciles the schema on every start — the `postgres/init/04-repair-schema.sql` file that used to enforce this no longer exists, and nothing runs it. If you hit the constraint error against a database that predates the current enum, the fix is to drop the stale constraint by hand and let Hibernate recreate the table:
+
+```sql
+ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_status_check;
+```
+
+Restart the service afterwards so that `ddl-auto: update` re-applies the mapping. A fresh database never needs this.
 
 ### Table `outbox_events`
 
@@ -471,7 +479,7 @@ Topic retention (from `event-bus-service/.../catalog/TopicCatalog.java`): 3 part
 | `spring.application.name` | `account-service` | Eureka service name and load-balancer name |
 | `spring.datasource.url` | `jdbc:postgresql://localhost:5433/account_db` | JDBC URL (no env placeholder in the YAML) |
 | `spring.datasource.username` | `${DB_USERNAME:banking_admin}` | Database user |
-| `spring.datasource.password` | `${DB_PASSWORD:REDACTED}` | Database password |
+| `spring.datasource.password` | `${DB_PASSWORD}` | Database password |
 | `spring.jpa.hibernate.ddl-auto` | `update` | Hibernate updates the schema on start |
 | `spring.jpa.open-in-view` | `false` | OSIV disabled |
 | `spring.kafka.bootstrap-servers` | `${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}` | Kafka brokers |
@@ -533,7 +541,7 @@ With the `local` profile, Eureka is disabled and the core banking service is res
 | Name | Default | Used for |
 |---|---|---|
 | `DB_USERNAME` | `banking_admin` | `spring.datasource.username` |
-| `DB_PASSWORD` | `REDACTED` | `spring.datasource.password` |
+| `DB_PASSWORD` | *(no default — mandatory)* | `spring.datasource.password` |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | `spring.kafka.bootstrap-servers` |
 | `EUREKA_URL` | `http://localhost:8761/eureka` | Eureka default zone |
 | `ACCOUNT_DEMO_BALANCE` | `0.00` | `app.account.demo-opening-balance` |
@@ -719,7 +727,7 @@ java -jar target/account-service-0.0.1-SNAPSHOT.jar --spring.profiles.active=loc
 ```bash
 export SPRING_DATASOURCE_URL='jdbc:postgresql://127.0.0.1:5433/account_db'
 export DB_USERNAME='banking_admin'
-export DB_PASSWORD='REDACTED'
+export DB_PASSWORD='<your postgres password>'
 export KAFKA_BOOTSTRAP_SERVERS='localhost:9092'
 export EUREKA_URL='http://localhost:8761/eureka'
 export ACCOUNT_DEMO_BALANCE='0.00'
@@ -809,7 +817,7 @@ curl -i 'http://localhost:8081/internal/accounts?accountNumbers=ACC-12345678,ACC
 | `management.server.port` | `18081` | The metrics port conflicts with another service |
 | `SPRING_DATASOURCE_URL` | `jdbc:postgresql://localhost:5433/account_db` | The database is not on the default host/port |
 | `DB_USERNAME` | `banking_admin` | The database user differs |
-| `DB_PASSWORD` | `REDACTED` | The database password differs |
+| `DB_PASSWORD` | *(unset)* | The database password differs |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | The broker is elsewhere |
 | `EUREKA_URL` | `http://localhost:8761/eureka` | The discovery server is elsewhere (or use the `local` profile) |
 | `app.cbs.base-url` | `http://core-banking-service` | The core banking service has a different Eureka name |
@@ -833,7 +841,7 @@ curl -i 'http://localhost:8081/internal/accounts?accountNumbers=ACC-12345678,ACC
 | `503` with `Balance temporarily unavailable, please try again` | An `ACTIVE`/`BLOCKED` account has no ledger balance | The log contains `No ledger balance for account <number>`; the ledger account is missing in CBS |
 | The account stays `PENDING` forever | The `LedgerAccountCreated` event never arrived | Check `cbs.events` on the broker; after 10 minutes the sweeper marks it `OPENING_FAILED` with `Opening timed out. Please try again` |
 | The account is `OPENING_FAILED` but a ledger account exists in CBS | The sweeper fired before the CBS answer arrived | A late `LedgerAccountCreated` still activates the account — the account turns `ACTIVE` on its own |
-| The account is `OPENING_FAILED` right after creation | The `accounts_status_check` constraint was still the old one | Run `postgres/init/04-repair-schema.sql` (idempotent; `run-all.sh` runs it on every start) |
+| The account is `OPENING_FAILED` right after creation | The `accounts_status_check` constraint was still the old one | Drop the stale constraint by hand (`ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_status_check;`) and restart the service so Hibernate recreates the table |
 | `400` with `Malformed request body or invalid accountType (SAVINGS or CURRENT)` | The body is not JSON, or `accountType` is not one of the two enum values | Use `{"accountType":"SAVINGS"}` or `{"accountType":"CURRENT"}` |
 | `outbox.pending.events` keeps growing | The relay cannot reach Kafka | Check `KAFKA_BOOTSTRAP_SERVERS` and the broker; the relay logs the publish failure and stops the batch so ordering is kept |
 | A command sits in `account.commands.DLT` | The message was malformed or failed 4 retries | `InvalidEventException` (for example `transferId is missing or too long`) is not retried and goes straight to the DLT |
